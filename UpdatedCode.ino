@@ -1,82 +1,118 @@
-#include <NewPing.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <Keypad.h>
 
-#define TRIG_PIN 11
-#define ECHO_PIN 12
-#define MAX_DISTANCE 20  // Maximum distance we want to measure (in cm)
+// Define LCD settings
+LiquidCrystal_I2C lcd(0x27, 20, 4);
 
-// Initialize the NewPing library
-NewPing sonar(TRIG_PIN, ECHO_PIN, MAX_DISTANCE);
+// Define Keypad settings
+const byte ROWS = 4; // Four rows
+const byte COLS = 3; // Three columns
+char keys[ROWS][COLS] = {
+  {'1', '2', '3'},
+  {'4', '5', '6'},
+  {'7', '8', '9'},
+  {'*', '0', '#'}
+};
+byte rowPins[ROWS] = {5, 4, 3, 2}; // Connect to the row pinouts of the keypad
+byte colPins[COLS] = {A3, A2, A1}; // Connect to the column pinouts of the keypad
+Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);
 
-// Variables for timing and lap counting
-unsigned long startTime;
-unsigned long currentTime;
-unsigned long lapTime;
-int lapCounter = 0;
+// Define Ultrasonic Sensor pins
+const int trigPin = 9;
+const int echoPin = 8;
+
+// Variables
+unsigned long lapStartTime;
 int totalLaps = 0;
-bool isRunning = false;
+int lapsCompleted = 0;
+bool timerRunning = false;
+
+// Function to measure distance
+long readUltrasonic() {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+  long duration = pulseIn(echoPin, HIGH);
+  long distance = (duration / 2) / 29.1;
+  return distance;
+}
+
+// Function to display time in HH:MM:SS format
+String formatTime(unsigned long timeInMillis) {
+  unsigned long secs = timeInMillis / 1000;
+  unsigned long mins = secs / 60;
+  unsigned long hours = mins / 60;
+  secs = secs % 60;
+  mins = mins % 60;
+  char timeString[9];
+  sprintf(timeString, "%02lu:%02lu:%02lu", hours, mins, secs);
+  return String(timeString);
+}
 
 void setup() {
-  Serial.begin(9600);
-  Serial.println("Enter the number of laps:");
+  lcd.init();
+  lcd.backlight();
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Enter No. of Laps:");
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
 }
 
 void loop() {
-  // Check if the user has entered the number of laps
-  if (Serial.available() > 0 && !isRunning) {
-    totalLaps = Serial.parseInt();
-    if (totalLaps > 0) {
-      Serial.print("Number of laps set to: ");
-      Serial.println(totalLaps);
-      isRunning = true;
-      lapCounter = 0;
+  if (!timerRunning) {
+    // Read keypad input for number of laps
+    char key = keypad.getKey();
+    if (key != NO_KEY) {
+      if (key >= '0' && key <= '9') {
+        totalLaps = totalLaps * 10 + (key - '0');
+        lcd.setCursor(0, 1);
+        lcd.print(totalLaps);
+      } else if (key == '*') {
+        timerRunning = true;
+        lapStartTime = millis();
+        lapsCompleted = 0;
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("Laps: 0 / ");
+        lcd.print(totalLaps);
+        lcd.setCursor(0, 1);
+        lcd.print("Lap Time: 00:00:00");
+      }
     }
-  }
-
-  if (isRunning) {
+  } else {
     // Measure distance
-    unsigned int distance = sonar.ping_cm();
-    
-    // If an object is detected within the sensor's range
-    if (distance > 0 && distance <= MAX_DISTANCE) {
-      if (lapCounter == 0) {
-        startTime = millis();
-      } else {
-        currentTime = millis();
-        lapTime = currentTime - startTime;
+    long distance = readUltrasonic();
+    if (distance < 10) {
+      unsigned long lapDuration = millis() - lapStartTime;
+      lapStartTime = millis();
+      lapsCompleted++;
+      lcd.setCursor(0, 2);
+      lcd.print("Lap ");
+      lcd.print(lapsCompleted);
+      lcd.print(" Time: ");
+      lcd.print(formatTime(lapDuration));
+      delay(1000); // Debounce
+    }
 
-        // Convert lap time to hours, minutes, and seconds
-        unsigned long seconds = lapTime / 1000;
-        unsigned long minutes = seconds / 60;
-        unsigned long hours = minutes / 60;
-        seconds %= 60;
-        minutes %= 60;
+    // Update display
+    lcd.setCursor(6, 0);
+    lcd.print(lapsCompleted);
+    lcd.setCursor(12, 0);
+    lcd.print(totalLaps);
 
-        // Print the lap time in Hours:Minutes:Seconds format
-        Serial.print("Lap ");
-        Serial.print(lapCounter);
-        Serial.print(": ");
-        Serial.print(hours);
-        Serial.print(":");
-        if (minutes < 10) Serial.print("0");
-        Serial.print(minutes);
-        Serial.print(":");
-        if (seconds < 10) Serial.print("0");
-        Serial.print(seconds);
-        Serial.println(" (H:M:S)");
-        
-        startTime = currentTime;
-      }
-      
-      lapCounter++;
-      
-      // Check if the required number of laps is completed
-      if (lapCounter >= totalLaps) {
-        Serial.println("All laps completed.");
-        isRunning = false;
-      }
-      
-      // Small delay to avoid multiple detections for the same lap
-      delay(1000);
+    unsigned long currentLapDuration = millis() - lapStartTime;
+    lcd.setCursor(10, 1);
+    lcd.print(formatTime(currentLapDuration));
+
+    // Check if laps completed
+    if (lapsCompleted >= totalLaps) {
+      timerRunning = false;
+      lcd.setCursor(0, 3);
+      lcd.print("All Laps Completed!");
     }
   }
 }
